@@ -58,6 +58,17 @@ fn main() {
         let android_home = option_env!("ANDROID_HOME").expect("ANDROID_HOME not set");
         let ndk_version = option_env!("NDK_VERSION").expect("NDK_VERSION not set");
 
+        // Auto-detect host tag
+        let host_tag = env::var("HOST_TAG").unwrap_or_else(|_| {
+            let os = env::consts::OS;
+            match os {
+                "macos" => "darwin-x86_64".to_string(),
+                "linux" => "linux-x86_64".to_string(),
+                "windows" => "windows-x86_64".to_string(),
+                _ => panic!("Unsupported host OS: {}", os),
+            }
+        });
+
         // Map Rust target to Android ABI
         let android_abi = match target.as_str() {
             "x86_64-linux-android" => "x86_64",
@@ -66,14 +77,27 @@ fn main() {
             _ => panic!("Unsupported Android target: {}", target),
         };
 
+        // Set up compiler paths
+        let ndk_path = format!("{}/ndk/{}", android_home, ndk_version);
+        let toolchain_path = format!("{}/toolchains/llvm/prebuilt/{}", ndk_path, host_tag);
+
+        // Set environment variables for the cmake crate
+        env::set_var("CC", format!("{}/bin/{}26-clang", toolchain_path, target));
+        env::set_var(
+            "CXX",
+            format!("{}/bin/{}26-clang++", toolchain_path, target),
+        );
+        env::set_var("AR", format!("{}/bin/llvm-ar", toolchain_path));
+        env::set_var("RANLIB", format!("{}/bin/llvm-ranlib", toolchain_path));
+
         dst = Config::new("../cpp")
             .generator("Ninja")
             .configure_arg("-DCMAKE_BUILD_TYPE=Release")
             .configure_arg(&format!("-DANDROID_ABI={}", android_abi))
             .configure_arg("-DANDROID_PLATFORM=android-33")
             .configure_arg(&format!(
-                "--toolchain={}/ndk/{}/build/cmake/android.toolchain.cmake",
-                android_home, ndk_version
+                "-DCMAKE_TOOLCHAIN_FILE={}/build/cmake/android.toolchain.cmake",
+                ndk_path
             ))
             .build_target("bb")
             .build();
